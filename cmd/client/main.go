@@ -29,14 +29,44 @@ func main() {
 		fmt.Println("Error in Client Welcome:", err)
 	}
 
+	amqpCh, err := amqpConnection.Channel()
+	if err != nil {
+		fmt.Println("Error creating channel:", err)
+	}
+	defer amqpCh.Close()
+
 	queueName := routing.PauseKey + "." + userName
 
-	_, _, err = pubsub.DeclareAndBind(amqpConnection, routing.ExchangePerilDirect, queueName, routing.PauseKey, pubsub.Transient)
+	gameState := gamelogic.NewGameState(userName)
+
+	err = pubsub.SubscribeJSON(
+		amqpConnection,
+		routing.ExchangePerilDirect,
+		queueName,
+		routing.PauseKey,
+		pubsub.Transient,
+		handlerPause(gameState),
+	)
 	if err != nil {
-		fmt.Println("Error Binding Queue:", err)
+		fmt.Println("Error in subscribing:", err)
+		return
 	}
 
-	gameState := gamelogic.NewGameState(userName)
+	armyQueueName := routing.ArmyMovesPrefix + "." + userName
+	armyRoutingKey := routing.ArmyMovesPrefix + ".*"
+
+	err = pubsub.SubscribeJSON(
+		amqpConnection,
+		routing.ExchangePerilTopic,
+		armyQueueName,
+		armyRoutingKey,
+		pubsub.Transient,
+		handlerMove(gameState),
+	)
+	if err != nil {
+		fmt.Println("Error in subscribing:", err)
+		return
+	}
 
 	for {
 		input := gamelogic.GetInput()
@@ -48,10 +78,18 @@ func main() {
 					fmt.Println("Error:", err)
 				}
 			case "move":
-				_, err = gameState.CommandMove(input)
+				mv, err := gameState.CommandMove(input)
 				if err != nil {
 					fmt.Println("Error:", err)
 				}
+				fmt.Println("Sending 'move' message.")
+				err = pubsub.PublishJSON(
+					amqpCh,
+					routing.ExchangePerilTopic,
+					armyQueueName,
+					mv,
+				)
+				fmt.Println("Move Published Successfully")
 			case "status":
 				gameState.CommandStatus()
 			case "help":
