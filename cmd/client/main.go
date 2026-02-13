@@ -61,12 +61,22 @@ func main() {
 		armyQueueName,
 		armyRoutingKey,
 		pubsub.Transient,
-		handlerMove(gameState),
+		handlerMove(gameState, amqpCh),
 	)
 	if err != nil {
 		fmt.Println("Error in subscribing:", err)
 		return
 	}
+
+	// In main.go
+	pubsub.SubscribeJSON(
+		amqpConnection,
+		routing.ExchangePerilTopic,
+		"war",                              // Queue name from Step 3
+		routing.WarRecognitionsPrefix+".*", // Wildcard to catch ALL war messages
+		pubsub.Durable,                     // Durable queue type
+		handlerWar(gameState),              // Pass the "worker" created by your factory
+	)
 
 	for {
 		input := gamelogic.GetInput()
