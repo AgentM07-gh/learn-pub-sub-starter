@@ -1,7 +1,9 @@
 package pubsub
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 
@@ -113,6 +115,15 @@ func SubscribeJSON[T any](
 		return err
 	}
 
+	err = connChannel.Qos(
+		10,    // prefetchCount
+		0,     // prefetchSize
+		false, // global
+	)
+	if err != nil {
+		fmt.Println(err)
+	}
+
 	msgs, err := connChannel.Consume(connQueue.Name, "", false, false, false, false, nil)
 	if err != nil {
 		return err
@@ -127,6 +138,86 @@ func SubscribeJSON[T any](
 				continue
 			}
 			result := handler(data)
+			switch result {
+			case Ack:
+				d.Ack(false)
+			case NackRequeue:
+				d.Nack(false, true)
+				fmt.Println("Nack:false, true")
+			case NackDiscard:
+				d.Nack(false, false)
+				fmt.Println("Nack:false, false")
+			}
+		}
+	}()
+
+	return nil
+}
+
+func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
+
+	var buffer bytes.Buffer
+	encoder := gob.NewEncoder(&buffer)
+	err := encoder.Encode(val)
+	if err != nil {
+		return err
+	}
+
+	err = ch.PublishWithContext(
+		context.Background(),
+		exchange,
+		key,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/gob",
+			Body:        buffer.Bytes(),
+		},
+	)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+	handler func(T) Acktype,
+) error {
+	connChannel, connQueue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	if err != nil {
+		return err
+	}
+
+	err = connChannel.Qos(
+		10,    // prefetchCount
+		0,     // prefetchSize
+		false, // global
+	)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	msgs, err := connChannel.Consume(connQueue.Name, "", false, false, false, false, nil)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		defer connChannel.Close()
+		var t T
+		for d := range msgs {
+			buf := bytes.NewReader(d.Body)
+			dec := gob.NewDecoder(buf)
+			err := dec.Decode(&t)
+			if err != nil {
+				fmt.Println(err)
+			}
+			result := handler(t)
 			switch result {
 			case Ack:
 				d.Ack(false)

@@ -29,10 +29,21 @@ func main() {
 	}
 	defer amqpCh.Close()
 
-	_, _, err = pubsub.DeclareAndBind(amqpConnection, routing.ExchangePerilTopic, routing.GameLogSlug, routing.PauseKey, pubsub.Durable)
-	if err != nil {
-		fmt.Println("Error Binding Queue:", err)
-	}
+	/*
+		_, _, err = pubsub.DeclareAndBind(amqpConnection, routing.ExchangePerilTopic, routing.GameLogSlug, routing.GameLogSlug+".*", pubsub.Durable)
+		if err != nil {
+			fmt.Println("Error Binding Queue:", err)
+		}
+	*/
+
+	err = pubsub.SubscribeGob(
+		amqpConnection,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.Durable,
+		handlerGameLogs,
+	)
 
 	for {
 		input := gamelogic.GetInput()
@@ -74,4 +85,10 @@ func main() {
 	sig := <-signalChan
 	fmt.Printf("\nReceived signal: %v\n", sig)
 	fmt.Println("Shutting down")
+}
+
+func handlerGameLogs(gl routing.GameLog) pubsub.Acktype {
+	defer fmt.Print("> ")
+	gamelogic.WriteLog(gl)
+	return pubsub.Ack
 }

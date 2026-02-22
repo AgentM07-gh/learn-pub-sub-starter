@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -75,7 +77,7 @@ func main() {
 		"war",                              // Queue name from Step 3
 		routing.WarRecognitionsPrefix+".*", // Wildcard to catch ALL war messages
 		pubsub.Durable,                     // Durable queue type
-		handlerWar(gameState),              // Pass the "worker" created by your factory
+		handlerWar(gameState, amqpCh),      // Pass the "worker" created by your factory
 	)
 
 	for {
@@ -105,7 +107,35 @@ func main() {
 			case "help":
 				gamelogic.PrintClientHelp()
 			case "spam":
-				fmt.Println("Spamming not allowed yet!")
+				//fmt.Println("Spamming not allowed yet!")
+				key := "game_logs." + userName
+				if len(input) < 2 {
+					fmt.Println("Spam command must contain count")
+					break
+				} else {
+					n, err := strconv.Atoi(input[1])
+					if err != nil {
+						fmt.Println("Spam count not valid")
+						break
+					}
+					for i := 0; i < n; i++ {
+						gl := routing.GameLog{
+							CurrentTime: time.Now(),
+							Message:     gamelogic.GetMaliciousLog(),
+							Username:    userName,
+						}
+						fmt.Printf("spam: user=%q msg=%q\n", gl.Username, gl.Message)
+						err = pubsub.PublishGob(
+							amqpCh,
+							routing.ExchangePerilTopic,
+							key,
+							gl,
+						)
+						if err != nil {
+							fmt.Println(err)
+						}
+					}
+				}
 			case "quit":
 				gamelogic.PrintQuit()
 				return

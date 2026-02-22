@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -43,24 +44,45 @@ func handlerMove(gs *gamelogic.GameState, publishCh *amqp.Channel) func(gamelogi
 	}
 }
 
-func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.Acktype {
+func handlerWar(gs *gamelogic.GameState, publishCh *amqp.Channel) func(gamelogic.RecognitionOfWar) pubsub.Acktype {
 	return func(rw gamelogic.RecognitionOfWar) pubsub.Acktype {
 		defer fmt.Print("> ")
-		outcome, _, _ := gs.HandleWar(rw)
+		outcome, winner, loser := gs.HandleWar(rw)
+		msg := ""
 		switch outcome {
 		case gamelogic.WarOutcomeNotInvolved:
 			return pubsub.NackRequeue
 		case gamelogic.WarOutcomeNoUnits:
 			return pubsub.NackDiscard
 		case gamelogic.WarOutcomeOpponentWon:
-			return pubsub.Ack
+			msg = fmt.Sprintf("%s won a war against %s", winner, loser)
 		case gamelogic.WarOutcomeYouWon:
-			return pubsub.Ack
+			msg = fmt.Sprintf("%s won a war against %s", winner, loser)
 		case gamelogic.WarOutcomeDraw:
-			return pubsub.Ack
+			msg = fmt.Sprintf("A war between %s and %s resulted in a draw", winner, loser)
 		default:
 			fmt.Print("Error in War Resolution")
 			return pubsub.NackDiscard
 		}
+		err := publishGameLog(publishCh, gs.GetUsername(), msg)
+		if err != nil {
+			return pubsub.NackRequeue
+		}
+		return pubsub.Ack
 	}
+}
+
+func publishGameLog(publishCh *amqp.Channel, username, msg string) error {
+	gameLog := routing.GameLog{
+		CurrentTime: time.Now(),
+		Message:     msg,
+		Username:    username,
+	}
+	key := routing.GameLogSlug + "." + username
+
+	err := pubsub.PublishGob(publishCh, routing.ExchangePerilTopic, key, gameLog)
+	if err != nil {
+		return err
+	}
+	return nil
 }
